@@ -27,7 +27,7 @@ const CounterStore = () => {
   let count = 0;
   return {
     state() {
-      return { count };
+      return count;
     },
     increase() {
       count++;
@@ -45,38 +45,25 @@ Now create your component.
 With Storeact your component can focus 100% on the UI and just call the actions that will automatically update the state:
 
 ```jsx harmony
-const CounterValue = () => {
-  const count = storeact(CounterStore, (store) => store.count);
-  return <h1>{count}</h1>;
-};
-
-const CounterActions = () => {
-  const { increase, decrease, increaseAsync } = storeact(
+function App() {
+  const { count, increase, decrease, increaseAsync } = storeact(
     // the first argument is store function
     CounterStore,
-    // the second argument is selector, that selects pie of state or store methods
-    (store) => ({
-      // ofcourse we can select store.count here
-      // but CounterActions does not need to show count value
-      increase: store.increase,
-      decrease: store.decrease,
+    // the second argument is selector, that selects pie of store state or methods
+    ({ increase, decrease, state }) => ({
+      count: state,
+      increase,
+      decrease,
     })
   );
-
-  return (
-    <div>
-      <button onClick={() => increase()}>Increase</button>
-      <button onClick={() => decrease()}>Decrease</button>
-      <button onClick={() => increaseAsync()}>Increase Async</button>
-    </div>
-  );
-};
-
-function App() {
   return (
     <div className="App">
-      <CounterValue />
-      <CounterActions />
+      <h1>{count}</h1>
+      <div>
+        <button onClick={() => increase()}>Increase</button>
+        <button onClick={() => decrease()}>Decrease</button>
+        <button onClick={() => increaseAsync()}>Increase Async</button>
+      </div>
     </div>
   );
 }

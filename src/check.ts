@@ -1,6 +1,6 @@
 import storeact, { StoreContext } from "./index";
 
-const CounterStore = ({ any }: StoreContext) => {
+const CounterStore = ({ any, loader }: StoreContext) => {
   let count = 0;
 
   return {
@@ -19,4 +19,4 @@ const CounterStore = ({ any }: StoreContext) => {
 };
 
 const store = storeact(CounterStore);
-const count = storeact(CounterStore, (store) => store.count);
+const count = storeact(CounterStore, (store) => store.state.count);
