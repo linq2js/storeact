@@ -1,6 +1,6 @@
 {
   "name": "storeact",
-  "version": "0.0.2",
+  "version": "1.0.0",
   "description": "A tiny store for React. One API rule them all",
   "main": "dist/index.js",
   "types": "src/index.d.ts",
