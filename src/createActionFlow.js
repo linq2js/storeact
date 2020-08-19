@@ -1,271 +1,160 @@
+import createEmitter from "./createEmitter";
 import isPromiseLike from "./isPromiseLike";
-import { noop, unset } from "./types";
+import { flowType } from "./types";
 
 const anyMatcher = () => true;
 const rootId = "#";
+let shadowFlowUniqueId = 0;
 
 export default function createActionFlow(rootFlow) {
   const flowMap = {};
-  let currentFlows = new Set();
-  let isDispatching = false;
-  let lastState = unset;
-  const { onDispatch } = rootFlow.$options || {};
+  const emitter = createEmitter();
+  const options = rootFlow.$options || {};
+  const { debounce: debounceOptions = {} } = options;
+  const timers = {};
   delete rootFlow.$options;
 
   function findFlow(id) {
+    if (id.charAt(0) !== "#") {
+      throw new Error("flow id must start with # " + id);
+    }
     if (id === rootId) return rootFlow;
     if (id in flowMap) return flowMap[id];
     throw new Error("Cannot find sub flow " + id);
   }
 
-  function normalizeFlow(originalFlow, name) {
-    const {
-      $id,
-      $then,
-      $fork = true,
-      $block = true,
-      $cancel,
-      $debounce,
-      $state,
-      ...props
-    } = originalFlow;
-    const result = {
-      id: $id,
-      name,
-      fork: $fork,
-      block: $block,
-      hasChild: false,
-      children: [],
-      debounce: $debounce,
-      state: $state,
-      cancel: $cancel
-        ? (Array.isArray($cancel) ? $cancel : [$cancel]).map((key) =>
-            createEmptyFlow({
-              name: key,
-              match: createMatcher(key),
-            })
-          )
-        : undefined,
-    };
-    Object.entries(props).forEach(([key, value]) => {
-      if (typeof value !== "object") {
-        throw new Error("Invalid sub flow. " + typeof value);
-      }
-      result.hasChild = true;
-      let child;
-      // create flow chain
-      if (/^chain:/.test(key)) {
-        let lastKey;
-        const keys = key
-          .substr(6)
-          .split(">")
-          .map((x) => x.trim());
-        key = keys.shift();
-        const f = keys.reduceRight((prev, key) => {
-          lastKey = key;
-          return { [key]: prev };
-        }, value);
-        child = normalizeFlow(f, key);
-        child.match = createMatcher(key);
-      } else {
-        child = normalizeFlow(value, key);
-        child.match = createMatcher(key);
-      }
+  rootFlow = normalizeFlow({ $root: true, ...rootFlow }, "#root", flowMap);
 
-      result.children.push(child);
+  function initFlow(flow) {
+    if (flow.initialized) return;
+    flow.initialized = true;
+    const removeListener = emitter.on("dispatch", (options) => {
+      if (!flow.fork) removeListener();
+
+      const { action } = options;
+      // do not handle child flow until current flow done
+      if (flow.block && flow.running) return;
+      flow.children.forEach((child) => {
+        if (!child.match(action)) return;
+
+        if (child.success) {
+          options.onSuccess.add(child.success);
+        }
+
+        if (child.error) {
+          options.onError.add(child.error);
+        }
+
+        if (child.done) {
+          options.onDone.add(child.done);
+        }
+
+        if (child.block) {
+          options.approvers.add(child);
+        } else {
+          initFlow(child);
+        }
+
+        options.approved = true;
+      });
     });
-
-    if ($id) {
-      flowMap[$id] = result;
-    }
-
-    if ($then) {
-      if (typeof $then === "function") {
-        result.then = (...args) => {
-          const thenResult = $then(...args);
-          if (typeof thenResult === "string") {
-            return findFlow(thenResult);
-          }
-          return normalizeFlow(thenResult);
-        };
-      } else if (typeof $then === "string") {
-        result.then = () => findFlow($then);
-      } else if (typeof $then === "object") {
-        result.then = () => $then;
-      } else {
-        throw new Error("Invalid $then " + typeof $then);
-      }
-    }
-
-    return result;
   }
 
-  rootFlow = normalizeFlow(rootFlow, "#root");
-
-  function processFlow(flow, options, addFlow, removeFlow) {
-    // clear previous timer if any
-    if (flow.onProcess) {
-      flow.onProcess(options);
+  function invoke(options) {
+    if (options.action in debounceOptions) {
+      clearTimeout(timers[options.action]);
+      timers[options.action] = setTimeout(
+        internalInvoke,
+        debounceOptions[options.action]
+      );
+    } else {
+      internalInvoke();
     }
 
-    const { action, invoke = noop, args = [] } = options;
+    function internalInvoke() {
+      const { approvers, onSuccess, onError, onDone, args = [] } = options;
+      const flowIds = new Set();
+      let invokeSuccess = false;
 
-    flow.children.forEach((childFlow) => {
-      if (!childFlow.match(action)) return;
-
-      if (flow.onMatch) {
-        flow.onMatch(childFlow);
+      function collectFlowId(handler) {
+        const flowId =
+          typeof handler === "function" ? handler(...args) : handler;
+        flowId && flowIds.add(flowId);
       }
-      let cancelled = false;
 
-      function execute() {
-        if (cancelled) return;
+      function handleSuccess() {
+        approvers.forEach(initFlow);
+        onSuccess.forEach(collectFlowId);
+      }
 
-        if (onDispatch) {
-          onDispatch(childFlow);
-        }
+      function handleError() {
+        onError.forEach(collectFlowId);
+      }
 
-        const result = invoke(...args);
-        const isPromise = isPromiseLike(result);
-        if (childFlow.then) {
-          function next() {
-            if (cancelled) return;
-            const nextFlow = childFlow.then(...args);
-            if (!nextFlow) return;
-            if (typeof nextFlow === "string") {
-              addFlow(findFlow(nextFlow));
-            } else if (typeof nextFlow === "object") {
-              addFlow(normalizeFlow(nextFlow));
-            } else {
-              throw new Error("Invalid $then. " + typeof nextFlow);
+      function handleDone() {
+        approvers.forEach((flow) => flow.running--);
+        onDone.forEach(collectFlowId);
+        flowIds.forEach((flowId) => {
+          if (typeof flowId !== "string")
+            throw new Error("Invalid flow id " + typeof flowId);
+
+          const flow = findFlow(flowId);
+          initFlow(flow);
+        });
+      }
+
+      try {
+        const invokeResult = options.invoke
+          ? options.invoke(...args)
+          : undefined;
+        invokeSuccess = true;
+        if (isPromiseLike(invokeResult)) {
+          approvers.forEach((flow) => {
+            if (typeof flow.running === "undefined") {
+              flow.running = 0;
             }
-          }
-
-          if (isPromise && childFlow.block) {
-            result.finally(next);
-          } else {
-            next();
-          }
-        } else if (childFlow.hasChild) {
-          if (isPromise) {
-            result.then(() => addFlow(childFlow));
-          } else {
-            addFlow(childFlow);
-          }
+            flow.running++;
+          });
+          invokeResult.then(handleSuccess, handleError).finally(handleDone);
+        } else {
+          handleSuccess();
+          handleDone();
         }
-        // re-add current flow
-        if (flow.fork && flow) {
-          addFlow(flow);
+      } catch (e) {
+        if (!invokeSuccess) {
+          handleError();
+          handleDone();
+        } else {
+          throw e;
         }
       }
-
-      if (childFlow.cancel && childFlow.cancel.length) {
-        const cancelFlow = createEmptyFlow({
-          children: childFlow.cancel,
-          onProcess() {
-            // re-add cancel flow whenever processing
-            !cancelled && addFlow(cancelFlow);
-          },
-          onMatch() {
-            cancelled = true;
-            removeFlow(cancelFlow);
-          },
-        });
-        addFlow(cancelFlow);
-      }
-
-      if (childFlow.debounce) {
-        // create empty flow to handle cancel debouncing if this childFlow is dispatched again
-        const emptyFlow = createEmptyFlowFrom(childFlow, {
-          onProcess() {
-            clearTimeout(timerId);
-          },
-        });
-        const timerId = setTimeout(() => {
-          removeFlow(emptyFlow);
-          execute();
-        }, childFlow.debounce);
-
-        addFlow(emptyFlow);
-      } else {
-        execute();
-      }
-    });
+    }
   }
 
   return {
-    get length() {
-      return currentFlows.size;
-    },
-    reset() {
-      if (isDispatching) throw new Error("Cannot reset flow while dispatching");
-      currentFlows = new Set();
-    },
-    state() {
-      if (lastState !== unset) return lastState;
-      if (typeof rootFlow.state === "function") {
-        const states = [];
-        currentFlows.forEach((flow) => {
-          if (typeof flow.state === "undefined") return;
-          if (typeof flow.state === "function") {
-            states.push(flow.state());
-          } else {
-            states.push(flow.state);
-          }
-        });
-        return (lastState = rootFlow.state(states));
-      }
-      return (lastState = rootFlow.state);
-    },
+    options,
     dispatch(options) {
       if (typeof options === "string") {
         options = { action: options };
       }
-      const newFlows = new Set();
-      isDispatching = true;
-
-      function addFlow(flow) {
-        if (flow === rootFlow) return;
-        if (isDispatching) {
-          newFlows.add(flow);
-        } else {
-          currentFlows.add(flow);
-        }
-      }
-
-      function removeFlow(flow) {
-        if (flow === rootFlow) return;
-        if (isDispatching) {
-          newFlows.delete(flow);
-        } else {
-          currentFlows.delete(flow);
-        }
-      }
-
-      try {
-        processFlow(rootFlow, options, addFlow, removeFlow);
-        currentFlows.forEach((flow) =>
-          processFlow(flow, options, addFlow, removeFlow)
-        );
-        currentFlows = newFlows;
-      } finally {
-        lastState = unset;
-        isDispatching = false;
+      const approvers = new Set();
+      const onSuccess = new Set();
+      const onDone = new Set();
+      const onError = new Set();
+      options = {
+        ...options,
+        approvers,
+        onSuccess,
+        onDone,
+        onError,
+      };
+      initFlow(rootFlow);
+      emitter.fire("dispatch", options);
+      if (options.approved) {
+        invoke(options);
       }
     },
   };
-}
-
-function createEmptyFlow(props) {
-  return {
-    hasChild: false,
-    children: [],
-    ...props,
-  };
-}
-
-function createEmptyFlowFrom({ match }, props) {
-  return createEmptyFlow({ match, ...props });
 }
 
 function createMatcher(key) {
@@ -286,4 +175,91 @@ function createMatcher(key) {
   }
   if (not) return (x) => !keys.includes(x);
   return (x) => keys.includes(x);
+}
+
+function createShadowFlowIfPossible(flow, flowMap) {
+  if (typeof flow !== "object") return flow;
+  const shadowId = "#shadow" + shadowFlowUniqueId++;
+  flowMap[shadowId] = normalizeFlow(flow, shadowId, flowMap);
+  return shadowId;
+}
+
+function normalizeFlow(originalFlow, name, flowMap) {
+  if (originalFlow && originalFlow.type === flowType) return originalFlow;
+  const {
+    $root,
+    $id,
+    $block = true,
+    $success,
+    $error,
+    $done,
+    $fork = true,
+    $state,
+    ...props
+  } = originalFlow;
+  const result = {
+    id: $id,
+    name,
+    success: createShadowFlowIfPossible($success, flowMap),
+    error: createShadowFlowIfPossible($error, flowMap),
+    done: createShadowFlowIfPossible($done, flowMap),
+    type: flowType,
+    fork: $fork,
+    block: $block,
+    hasChild: false,
+    children: [],
+  };
+
+  Object.entries(props).forEach(([key, value]) => {
+    // is shadow flow
+    if (key.charAt(0) === "#") {
+      if (!$root) {
+        throw new Error("Shadow flow must be nested in root flow");
+      }
+      flowMap[key] = normalizeFlow(value, key, flowMap);
+      return;
+    }
+    if (typeof value === "string") {
+      const flowId = value;
+      value = () => flowId;
+    }
+
+    if (typeof value === "function") {
+      value = {
+        $success: value,
+      };
+    }
+
+    if (typeof value !== "object") {
+      throw new Error("Invalid sub flow. " + typeof value);
+    }
+    result.hasChild = true;
+    let child;
+    // create flow chain
+    if (/^chain:/.test(key)) {
+      let lastKey;
+      const keys = key
+        .substr(6)
+        .split(">")
+        .map((x) => x.trim());
+      key = keys.shift();
+      const f = keys.reduceRight((prev, key) => {
+        lastKey = key;
+        return { [key]: prev };
+      }, value);
+      child = normalizeFlow(f, key, flowMap);
+      child.match = createMatcher(key);
+    } else {
+      child = normalizeFlow(value, key, flowMap);
+      child.match = createMatcher(key);
+    }
+
+    result.children.push(child);
+  });
+
+  if ($id) {
+    flowMap[$id] = result;
+  }
+
+  return result;
 }

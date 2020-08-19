@@ -1,6 +1,7 @@
 import createEmitter from "../createEmitter";
+import createLoadable from "../createLoadable";
 import isPromiseLike from "../isPromiseLike";
-import { asyncValueType, taskType, unset } from "../types";
+import { asyncValueType, taskType, unset, noop } from "../types";
 
 const forever = new Promise(() => {});
 const defaultCancellable = { cancelled: false };
@@ -47,11 +48,21 @@ export function delayModule(context) {
 export function valueModule({ forceUpdate }) {
   return function (value) {
     const emitter = createEmitter();
-    let autoUpdate = false;
+    let autoUpdate = true;
     let currentValue = value;
     let currentLoading;
-    let currentPromise = unset;
+    let currentPromise = undefined;
     let error = undefined;
+    let update = autoUpdate ? () => forceUpdate(true) : noop;
+
+    function loadableOnChange(listener) {
+      return emitter.on("ready", listener);
+    }
+
+    function addLoadable(promise) {
+      promise.__loadable = createLoadable(promise, loadableOnChange, update);
+      return promise;
+    }
 
     return {
       type: asyncValueType,
@@ -67,30 +78,30 @@ export function valueModule({ forceUpdate }) {
       set value(newValue) {
         if (currentValue !== newValue) {
           currentValue = newValue;
-          currentPromise = unset;
+          currentPromise = undefined;
           emitter.fire("change", this);
           emitter.fire("ready", this);
-          if (autoUpdate) {
-            forceUpdate();
-          }
+          update();
         }
       },
       get dirty() {
         return value === currentValue;
       },
       get promise() {
-        if (this.loading) {
-          return (currentPromise = new Promise((resolve) =>
-            this.onReady(() => resolve(this.value))
-          ));
-        }
-        if (currentPromise === unset) {
-          currentPromise = Promise.resolve(currentValue);
+        if (!currentPromise) {
+          if (this.loading) {
+            currentPromise = addLoadable(
+              new Promise((resolve) => this.onReady(() => resolve(this.value)))
+            );
+          } else {
+            currentPromise = addLoadable(Promise.resolve(currentValue));
+          }
         }
         return currentPromise;
       },
-      autoUpdate() {
-        autoUpdate = true;
+      autoUpdate(value = true) {
+        autoUpdate = value;
+        update = autoUpdate ? () => forceUpdate(true) : noop;
         return this;
       },
       onChange: emitter.get("change").on,
@@ -103,9 +114,11 @@ export function valueModule({ forceUpdate }) {
         }
       },
       cancel() {
+        if (!currentLoading) return;
         currentLoading = undefined;
         emitter.fire("ready", this);
-        currentPromise = unset;
+        currentPromise = undefined;
+        update();
         return this;
       },
       load(newLoading, cancellable = defaultCancellable) {
@@ -117,19 +130,47 @@ export function valueModule({ forceUpdate }) {
           throw new Error("Value must be promise");
         }
         const current = (currentLoading = newLoading);
+        let removeCancelListener;
+        let done = false;
         error = undefined;
+        if (cancellable && typeof cancellable.onCancel === "function") {
+          removeCancelListener = cancellable.onCancel(() => {
+            if (currentLoading !== current || done) return;
+            // fire ready event, currentPromise will handle this event and resolve value
+            emitter.fire("ready", this);
+            currentPromise = undefined;
+            currentLoading = undefined;
+            update();
+          });
+          currentLoading.finally(removeCancelListener);
+        }
+        currentPromise = undefined;
+
         currentLoading.then(
           (payload) => {
-            if (current !== currentLoading || cancellable.cancelled) return;
+            if (currentLoading !== current || cancellable.cancelled) return;
+            currentPromise = undefined;
             currentLoading = undefined;
-            this.value = payload;
+            done = true;
+            // loadable state is updated
+            if (this.value === payload) {
+              emitter.fire("ready", this);
+            } else {
+              this.value = payload;
+            }
           },
           (e) => {
-            if (current !== currentLoading || cancellable.cancelled) return;
+            if (currentLoading !== current || cancellable.cancelled) return;
             currentLoading = undefined;
+            currentPromise = undefined;
             error = e;
+            done = true;
+            emitter.fire("ready", this);
+            update();
           }
         );
+
+        update();
 
         return this;
       },
@@ -162,6 +203,7 @@ export function cancellableModule({ forceUpdate, use }) {
   return function (...cancelActions) {
     const task = race(cancelActions);
     const emitter = createEmitter();
+    let instance;
     let cancelled = false;
 
     function isCancelled() {
@@ -171,7 +213,7 @@ export function cancellableModule({ forceUpdate, use }) {
     function cancel() {
       if (cancelled) return;
       cancelled = true;
-      emitter.fire("cancel");
+      emitter.fire("cancel", instance);
       task.cancel();
     }
 
@@ -219,14 +261,15 @@ export function cancellableModule({ forceUpdate, use }) {
 
     task.finally(cancel);
 
-    return {
+    return (instance = {
       get cancelled() {
         return isCancelled();
       },
+      onCancel: emitter.get("cancel").on,
       cancel,
       wrap,
       call,
-    };
+    });
   };
 }
 

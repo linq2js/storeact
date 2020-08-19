@@ -5,8 +5,8 @@ import { renderHook } from "@testing-library/react-hooks";
 const delay = (ms, value) =>
   new Promise((resolve) => setTimeout(resolve, ms, value));
 
-function createCounterActions() {
-  let count = 0;
+function createCounterActions(initial = 0) {
+  let count = initial;
   return {
     get: () => count,
     increase: { action: "increase", invoke: () => count++ },
@@ -15,11 +15,7 @@ function createCounterActions() {
   };
 }
 
-function flowShouldBeEmpty(flow) {
-  expect(flow.length).toBe(0);
-}
-
-test("with fork", () => {
+test("simple flow", () => {
   const flow = createActionFlow({
     increase: {},
     decrease: {},
@@ -29,72 +25,40 @@ test("with fork", () => {
   expect(actions.get()).toBe(1);
   flow.dispatch(actions.decrease);
   expect(actions.get()).toBe(0);
-  flowShouldBeEmpty(flow);
 });
 
-test("without fork", () => {
+test("blocking flow", async () => {
+  let initInstanceDone = 0;
   const flow = createActionFlow({
     init: {
-      $fork: false,
       increase: {},
       decrease: {},
     },
   });
   const actions = createCounterActions();
-  flow.dispatch({ action: "init" });
-  flow.dispatch(actions.increase);
-  expect(actions.get()).toBe(1);
-  flow.dispatch(actions.increase);
-  expect(actions.get()).toBe(1);
-  flow.dispatch(actions.decrease);
-  expect(actions.get()).toBe(1);
-
-  flow.reset();
-  // cannot increase if init was not called
-  flow.dispatch(actions.increase);
-  expect(actions.get()).toBe(1);
-
-  flow.dispatch({ action: "init" });
-  flow.dispatch(actions.decrease);
-  expect(actions.get()).toBe(0);
-  flowShouldBeEmpty(flow);
-});
-
-test("debounce", async () => {
-  const flow = createActionFlow({
-    increase: {
-      $debounce: 10,
-    },
-    decrease: {},
+  flow.dispatch({
+    action: "init",
+    invoke: () => delay(10).then(() => initInstanceDone++),
   });
-  const actions = createCounterActions();
+  flow.dispatch({
+    action: "init",
+    invoke: () => delay(50).then(() => initInstanceDone++),
+  });
   flow.dispatch(actions.increase);
-  flow.dispatch(actions.increase);
-  flow.dispatch(actions.increase);
+  // nothing change because both init instances are running
   expect(actions.get()).toBe(0);
   await delay(15);
-  expect(actions.get()).toBe(1);
-
+  // first init instance is done but the other still not done so we cannot invoke increase
+  expect(initInstanceDone).toBe(1);
   flow.dispatch(actions.increase);
-  await delay(15);
+  expect(actions.get()).toBe(0);
+  // at this time, both init instances are done
+  await delay(55);
+  expect(initInstanceDone).toBe(2);
+  flow.dispatch(actions.increase);
+  expect(actions.get()).toBe(1);
+  flow.dispatch(actions.increase);
   expect(actions.get()).toBe(2);
-  flowShouldBeEmpty(flow);
-});
-
-test("cancel", async () => {
-  const flow = createActionFlow({
-    increase: {
-      $debounce: 10,
-    },
-    decrease: {},
-  });
-  const actions = createCounterActions();
-  flow.dispatch(actions.increase);
-  flow.dispatch(actions.cancel);
-  expect(actions.get()).toBe(0);
-  await delay(15);
-  expect(actions.get()).toBe(0);
-  flowShouldBeEmpty(flow);
 });
 
 test("action groups", () => {
@@ -215,4 +179,152 @@ test("integrate with store", async () => {
   expect(searchCallback).toBeCalledTimes(0);
   await delay(20);
   expect(searchCallback).toBeCalledTimes(1);
+});
+
+test("debounce", async () => {
+  const flow = createActionFlow({
+    $options: {
+      debounce: {
+        increase: 10,
+      },
+    },
+    increase: {},
+  });
+  const actions = createCounterActions();
+  flow.dispatch(actions.increase);
+  flow.dispatch(actions.increase);
+  flow.dispatch(actions.increase);
+  flow.dispatch(actions.increase);
+
+  expect(actions.get()).toBe(0);
+  await delay(20);
+  expect(actions.get()).toBe(1);
+});
+
+test("handle success", async () => {
+  const flow = createActionFlow({
+    increaseAsync: {
+      $success: "#shadowFlow",
+    },
+    "#shadowFlow": {
+      increase: {},
+    },
+  });
+
+  const actions = createCounterActions();
+  // cannot dispatch increase
+  flow.dispatch(actions.increase);
+  expect(actions.get()).toBe(0);
+  // increaseAsync will init __shadowFlow
+  flow.dispatch({ action: "increaseAsync", invoke: () => delay(10) });
+  // but we need to wait until increaseAsync done
+  // so we cannot dispatch increase at this time
+  flow.dispatch(actions.increase);
+  expect(actions.get()).toBe(0);
+  await delay(20);
+  flow.dispatch(actions.increase);
+  expect(actions.get()).toBe(1);
+});
+
+test("handle error", async () => {
+  const flow = createActionFlow({
+    increaseAsync: {
+      $error: "#shadowFlow",
+    },
+    "#shadowFlow": {
+      increase: {},
+    },
+  });
+
+  const actions = createCounterActions();
+  // cannot dispatch increase
+  flow.dispatch(actions.increase);
+  expect(actions.get()).toBe(0);
+  // increaseAsync will init __shadowFlow
+  flow.dispatch({
+    action: "increaseAsync",
+    invoke: () => delay(10).then(() => Promise.reject()),
+  });
+  // but we need to wait until increaseAsync done
+  // so we cannot dispatch increase at this time
+  flow.dispatch(actions.increase);
+  expect(actions.get()).toBe(0);
+  await delay(20);
+  flow.dispatch(actions.increase);
+  expect(actions.get()).toBe(1);
+});
+
+test("handle done", async () => {
+  const flow = createActionFlow({
+    increaseAsync: {
+      $done: "#shadowFlow",
+    },
+    "#shadowFlow": {
+      increase: {},
+    },
+  });
+
+  const actions = createCounterActions();
+  // cannot dispatch increase
+  flow.dispatch(actions.increase);
+  expect(actions.get()).toBe(0);
+  // increaseAsync will init __shadowFlow
+  flow.dispatch({
+    action: "increaseAsync",
+    invoke: () => delay(10).then(() => Promise.reject()),
+  });
+  // but we need to wait until increaseAsync done
+  // so we cannot dispatch increase at this time
+  flow.dispatch(actions.increase);
+  expect(actions.get()).toBe(0);
+  await delay(20);
+  flow.dispatch(actions.increase);
+  expect(actions.get()).toBe(1);
+});
+
+test("short hand for $success", async () => {
+  const flow = createActionFlow({
+    increaseAsync: "#shadowFlow",
+    "#shadowFlow": {
+      increase: {},
+    },
+  });
+
+  const actions = createCounterActions();
+  // cannot dispatch increase
+  flow.dispatch(actions.increase);
+  expect(actions.get()).toBe(0);
+  // increaseAsync will init __shadowFlow
+  flow.dispatch({ action: "increaseAsync", invoke: () => delay(10) });
+  // but we need to wait until increaseAsync done
+  // so we cannot dispatch increase at this time
+  flow.dispatch(actions.increase);
+  expect(actions.get()).toBe(0);
+  await delay(20);
+  flow.dispatch(actions.increase);
+  expect(actions.get()).toBe(1);
+});
+
+test("inline shadow flow", async () => {
+  const flow = createActionFlow({
+    increaseAsync: {
+      $success: {
+        increase: {},
+      },
+    },
+  });
+
+  const actions = createCounterActions();
+  // cannot dispatch increase
+  flow.dispatch(actions.increase);
+  expect(actions.get()).toBe(0);
+  // increaseAsync will init __shadowFlow
+  flow.dispatch({ action: "increaseAsync", invoke: () => delay(10) });
+  // but we need to wait until increaseAsync done
+  // so we cannot dispatch increase at this time
+  flow.dispatch(actions.increase);
+  expect(actions.get()).toBe(0);
+  await delay(20);
+  flow.dispatch(actions.increase);
+  expect(actions.get()).toBe(1);
 });

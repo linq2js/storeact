@@ -8,19 +8,43 @@ import { noop, unset } from "./types";
 import { initScopeName, dispatchScopeName } from "./scopeNames";
 
 export default function createStore(definition, args) {
+  const parents = new Set();
   const { fireOnChange, fireOnDispatch, ...storeApi } = createStoreApi({
-    forceUpdate,
+    parents,
+    forceUpdate: callUpdate,
   });
+
   const store = uniScope(initScopeName, (scope) => {
+    scope.parents = parents;
     scope.api = storeApi;
     scope.update = update;
     return definition(...args);
   });
-  const { state = noop, flow: flowFactory, ...actions } = store;
+  const {
+    state = noop,
+    flow: flowFactory,
+    onChange,
+    onDispatch,
+    ...actions
+  } = store;
   const flowDefinition =
     typeof flowFactory === "function" ? flowFactory() : flowFactory;
   const flow = flowDefinition ? createActionFlow(flowDefinition) : undefined;
   let currentState = unset;
+
+  if (onChange) {
+    storeApi.onChange(() => onChange(currentState));
+  }
+  if (onDispatch) {
+    // we remove store instance to avoid circular dispatching
+    storeApi.onDispatch(({ action, payload, args }) =>
+      onDispatch({ action: action.displayName, payload, args })
+    );
+  }
+
+  parents.forEach((parent) => {
+    parent.onChange(update);
+  });
 
   if (typeof state !== "function") {
     throw new Error("State method must be function");
@@ -30,10 +54,16 @@ export default function createStore(definition, args) {
     ...storeApi,
   });
 
-  function forceUpdate(...functions) {
+  function forceUpdate() {
+    return update(true);
+  }
+
+  function callUpdate(...functions) {
+    if (functions[0] === true) {
+      return update(true);
+    }
     if (!functions.length) {
-      update();
-      return;
+      return update();
     }
     return uniScope(
       dispatchScopeName,
@@ -54,7 +84,7 @@ export default function createStore(definition, args) {
     );
   }
 
-  function update() {
+  function shouldUpdate(force) {
     const scope = uniScope(dispatchScopeName);
 
     if (scope) {
@@ -62,19 +92,28 @@ export default function createStore(definition, args) {
         scope.updates = new Set();
         scope.onDispose = runAllUpdates;
       }
-      scope.updates.add(update);
+      scope.updates.add(force ? forceUpdate : update);
+      return false;
+    }
+    return true;
+  }
+
+  function update(force) {
+    if (!shouldUpdate(force)) {
       return;
     }
 
     const nextState = state();
-    if (currentState === unset) {
-      currentState = nextState;
-      return;
-    }
+    // if (currentState === unset) {
+    //   currentState = nextState;
+    //   return;
+    // }
 
-    if (isEqual(nextState, currentState)) {
-      return;
-    }
+    // if (force !== true) {
+    //   if (currentState !== unset && isEqual(nextState, currentState)) {
+    //     return;
+    //   }
+    // }
     currentState = nextState;
     fireOnChange(store);
   }
@@ -87,9 +126,10 @@ export default function createStore(definition, args) {
       fireOnDispatch({
         action: boundAction,
         payload: inputArgs[0],
+        args: inputArgs,
         store,
       });
-      return forceUpdate(
+      return callUpdate(
         () => (lastResult = originalAction.apply(store, inputArgs))
       );
     };

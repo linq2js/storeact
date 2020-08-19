@@ -11,6 +11,7 @@ export interface Context {
 
 export interface Cancellable {
   readonly cancelled: boolean;
+  onCancel(listener: GenericListener<Cancellable>): RemoveListener;
   cancel(): void;
   wrap<T extends (...args: any[]) => any>(obj: T): CancellableWrappedInfer<T>;
   wrap<T extends Promise<any>>(
@@ -24,12 +25,9 @@ export interface Cancellable {
   call<T extends Function>(func: T, ...args: any[]): void;
 }
 
-export type Flow =
-  | FlowProps
-  | Omit<
-      ChildFlows,
-      "$id" | "$debounce" | "$state" | "$block" | "$fork" | "$cancel" | "$then"
-    >;
+export type Flow<T extends ChildFlows = ChildFlows> =
+  | FlowProps<T>
+  | Omit<T, "$id" | "$options" | "$block">;
 
 interface DefaultExports {
   /**
@@ -156,19 +154,18 @@ interface ChildFlows {
   [key: string]: Flow;
 }
 
-interface FlowProps {
+interface FlowProps<T> {
   $id?: string;
-  $debounce?: number;
-  $state?: (() => any) | any;
   $block?: boolean;
+  $success?: FlowResolver;
+  $error?: FlowResolver;
+  $done?: FlowResolver;
   $fork?: boolean;
-  $cancel?: string | string[];
-  $then: FlowId | ((...args: any[]) => FlowId | Flow) | Flow;
-  $options?: FlowOptions;
+  $options?: FlowOptions<T>;
 }
 
-interface FlowOptions {
-  onDispatch?: (flow?: FlowArgs) => any;
+interface FlowOptions<T> {
+  debounce?: { [key in keyof T]: number };
 }
 
 interface FlowArgs {
@@ -176,6 +173,7 @@ interface FlowArgs {
   name: string;
 }
 
+type FlowResolver = string | ((...args) => string);
 type FlowId = RootFlowId | string;
 type RootFlowId = "#";
 

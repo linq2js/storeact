@@ -73,3 +73,12 @@ test("parent & child store", () => {
   result.current.parentIncrease();
   expect(result.current.state).toEqual({ parent: true, child: true, count: 4 });
 });
+
+test("child store should update when parent store updated", () => {
+  const { result: parentResult } = renderHook(() => storeact(ParentStore));
+  const { result: childResult } = renderHook(() => storeact(ChildStore));
+  const callback = jest.fn();
+  childResult.current.onChange(callback);
+  parentResult.current.increase();
+  expect(callback).toBeCalledTimes(1);
+});

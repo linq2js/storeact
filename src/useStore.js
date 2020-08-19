@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import createLoadable from "./createLoadable";
 import initStore from "./initStore";
 import isEqual from "./isEqual";
 import isPromiseLike from "./isPromiseLike";
@@ -44,43 +45,6 @@ export default function useStore(definition, selector) {
   return data.prev;
 }
 
-function createLoadable(promise) {
-  const emitter = createEmitter();
-  const onChange = emitter.get("change").on;
-  promise.__loadable = {
-    type: loadableType,
-    state: "loading",
-    promise,
-    onChange,
-  };
-  promise.then(
-    (value) => {
-      promise.__loadable = {
-        type: loadableType,
-        state: "hasValue",
-        value,
-        promise,
-        onChange,
-      };
-      emitter.fire("change", promise.__loadable);
-      emitter.clear();
-    },
-    (error) => {
-      promise.__loadable = {
-        type: loadableType,
-        state: "hasError",
-        error,
-        promise,
-        onChange,
-      };
-      emitter.fire("change", promise.__loadable);
-      emitter.clear();
-    }
-  );
-
-  return promise.__loadable;
-}
-
 function createSelector(store, selector = defaultSelector, fireStateChange) {
   function loadableOf(input) {
     if (!input) {
@@ -91,14 +55,14 @@ function createSelector(store, selector = defaultSelector, fireStateChange) {
       input = input.promise;
     }
 
-    if (input.__loadable) {
-      return input.__loadable;
-    }
-
     if (!isPromiseLike(input)) {
       throw new Error("promise is required. ");
     }
-    const loadable = createLoadable(input);
+
+    let loadable = input.__loadable;
+    if (!loadable) {
+      loadable = createLoadable(input);
+    }
     loadable.onChange(fireStateChange);
     return loadable;
   }

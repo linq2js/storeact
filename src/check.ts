@@ -16,13 +16,18 @@ function Store() {
   const value = async.value(true);
 
   const that = {
-    flow() {
+    flow(): Flow {
       return {
+        $options: {
+          debounce: {
+            search1: 1,
+          },
+        },
         $cancel: "cancel",
         search: {
           $block: true,
         },
-      } as Flow;
+      };
     },
     init() {},
     state() {

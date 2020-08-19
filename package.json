@@ -1,6 +1,6 @@
 {
   "name": "storeact",
-  "version": "1.0.0",
+  "version": "1.0.22",
   "description": "A tiny store for React. One API rule them all",
   "main": "dist/index.js",
   "types": "src/index.d.ts",
@@ -25,7 +25,10 @@
   "jest": {
     "transform": {
       "^.+\\.[t|j]sx?$": "babel-jest"
-    }
+    },
+    "modulePathIgnorePatterns": [
+      "<rootDir>/dist/"
+    ]
   },
   "author": "",
   "license": "ISC",
