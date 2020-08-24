@@ -1,6 +1,6 @@
 # Storeact
 
-A tiny store for React. One API rule them all
+Zero-configuration store for React. One API rule them all.
 
 ## Installation
 
