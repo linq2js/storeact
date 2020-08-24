@@ -4,9 +4,6 @@
   "description": "Zero-configuration store for React. One API rule them all",
   "main": "dist/index.js",
   "types": "src/index.d.ts",
-  "publishConfig": {
-    "registry": "https://npm.pkg.github.com/"
-  },
   "scripts": {
     "test": "jest --runInBand --detectOpenHandles",
     "build": "babel src --out-dir dist --source-maps --ignore '**/*.test.js'",
