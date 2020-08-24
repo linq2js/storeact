@@ -1,21 +1,22 @@
-import getStoreContext from "./getStoreContext";
-import uniScope from "./uniScope";
-import initStore from "./initStore";
-import { initScopeName } from "./scopeNames";
+import { add } from "./module";
 import isHookEnabled from "./isHookEnabled";
 import storeHook from "./useStore";
+import initStore from "./initStore";
+export { default as createTask } from "./createTask";
+export { default as createAtom } from "./createAtom";
+import { currentContext } from "./createStore";
 
 export default function storeact() {
-  // storeact() => context
   if (!arguments.length) {
-    return getStoreContext();
-  }
-  // storeact(definition)
-  if (arguments.length < 2) {
-    // initializing store
-    if (uniScope(initScopeName) || !isHookEnabled()) {
-      return initStore(arguments[0]);
+    if (!currentContext) {
+      throw new Error("No store context found");
     }
+    return currentContext;
   }
-  return storeHook(...arguments);
+  if (isHookEnabled()) return storeHook(...arguments);
+  return initStore(...arguments);
 }
+
+Object.assign(storeact, {
+  module: add,
+});

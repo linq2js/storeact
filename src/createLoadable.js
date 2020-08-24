@@ -1,52 +1,70 @@
 import createEmitter from "./createEmitter";
-import { loadableType } from "./types";
 
-export default function createLoadable(promise, customOnChange, customOnDone) {
+export default function createLoadable(promise) {
+  if (promise.__loadable) return promise.__loadable;
   const emitter = createEmitter();
-  function onChange(listener) {
-    if (customOnChange) {
-      emitter.on("dispose", customOnChange(listener));
-    } else {
-      emitter.on("change", listener);
-    }
+  const onDone = emitter.get("done").on;
+  let state = "loading";
+  let value;
+  let error;
+
+  function tryGetValue(defaultValue) {
+    if (state !== "hasValue") return defaultValue;
+    return value;
   }
 
-  function done() {
-    emitter.fire("change", promise.__loadable);
-    emitter.fire("dispose");
-    emitter.clear();
-    customOnDone && customOnDone();
+  function cancelled() {
+    return typeof promise.cancelled === "function" && promise.cancelled();
   }
 
-  promise.__loadable = {
-    type: loadableType,
-    state: "loading",
-    promise,
-    onChange,
-  };
-
-  promise.then(
-    (value) => {
-      promise.__loadable = {
-        type: loadableType,
-        state: "hasValue",
-        value,
-        promise,
-        onChange,
-      };
-      done();
+  Object.assign(promise, {
+    cancel() {
+      const loadable = promise.__loadable;
+      delete promise.__loadable;
+      emitter.emit("done", loadable);
+      emitter.clear();
     },
-    (error) => {
-      promise.__loadable = {
-        type: loadableType,
-        state: "hasError",
-        error,
-        promise,
-        onChange,
-      };
-      done();
+    dispose() {
+      delete promise.__loadable;
+      emitter.clear();
+    },
+    __loadable: {
+      state,
+      onDone,
+      promise,
+      tryGetValue
     }
-  );
+  });
+
+  promise
+    .then(
+      (result) => {
+        state = "hasValue";
+        value = result;
+      },
+      (result) => {
+        state = "hasError";
+        error = result;
+      }
+    )
+    .finally(() => {
+      if (cancelled()) {
+        // if promise cancelled, we do not update loadable object
+        return;
+      } else {
+        promise.__loadable = {
+          state,
+          error,
+          value,
+          onDone,
+          promise,
+          tryGetValue
+        };
+      }
+
+      emitter.emit("done", promise.__loadable);
+      emitter.clear();
+    });
 
   return promise.__loadable;
 }

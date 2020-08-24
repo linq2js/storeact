@@ -22,8 +22,8 @@ export default function createEmitter() {
         index !== -1 && listeners.splice(index, 1);
       };
     }
-    function fire(payload) {
-      listeners.forEach((listener) => listener(payload));
+    function emit(payload) {
+      listeners.slice(0).forEach((listener) => listener(payload));
     }
     function clear() {
       listeners.length = 0;
@@ -38,7 +38,7 @@ export default function createEmitter() {
 
     return Object.assign(listeners, {
       on,
-      fire,
+      emit,
       clear,
       once,
     });
@@ -48,19 +48,24 @@ export default function createEmitter() {
     return get(event).on(listener);
   }
 
-  function fire(event, payload) {
-    return get(event).fire(payload);
+  function emit(event, payload) {
+    return get(event).emit(payload);
   }
 
   function once(event, listener = noop) {
     return get(event).once(listener);
   }
 
+  function has(event) {
+    return all[event] && all[event].length;
+  }
+
   return {
     on,
     once,
-    fire,
+    emit,
     get,
+    has,
     clear(event) {
       if (event) {
         // clear specified event listeners

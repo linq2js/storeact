@@ -1,17 +1,16 @@
 import { useEffect, useRef, useState } from "react";
-import createLoadable from "./createLoadable";
 import initStore from "./initStore";
 import isEqual from "./isEqual";
 import isPromiseLike from "./isPromiseLike";
-import { asyncValueType } from "./types";
-import createEmitter from "./createEmitter";
+import createLoadable from "./createLoadable";
+import { atomType } from "./types";
 
 const defaultSelector = (store) => store;
-const loadableType = () => {};
 
-export default function useStore(definition, selector) {
+export default function useStore(definition, selector = defaultSelector) {
   const store = initStore(definition);
   const data = useRef({}).current;
+  data.store = store;
   data.rerender = useState(undefined)[1];
   if (!data.handleChange) {
     data.handleChange = () => {
@@ -33,59 +32,76 @@ export default function useStore(definition, selector) {
     };
   }
 
-  data.selector = createSelector(store, selector, data.handleChange);
+  data.selector = createSelector(data, selector);
   data.effect = () => {
-    if (data.prev === definition.__instance) return;
-    return store.onChange(data.handleChange);
+    // do not handleChange if user selects store object
+    if (data.prev === definition.__store) return;
+    return store.subscribe(data.handleChange);
   };
   useEffect(() => () => void (data.unmount = true), [data]);
-  useEffect(data.effect, [data, store]);
+  useEffect(() => data.effect(), [data, store]);
   if (data.error) throw data.error;
   data.prev = data.selector();
   return data.prev;
 }
 
-function createSelector(store, selector = defaultSelector, fireStateChange) {
-  function loadableOf(input) {
-    if (!input) {
-      throw new Error("promise is required. ");
-    }
+function createSelector(data, selector) {
+  if (data.prevSelector === selector) return data.selectorWrapper;
+  data.prevSelector = selector;
+  const loadableListeners = [];
+  const handledLoadables = new Set();
 
-    if (input.type === asyncValueType) {
-      input = input.promise;
-    }
-
-    if (!isPromiseLike(input)) {
-      throw new Error("promise is required. ");
-    }
-
-    let loadable = input.__loadable;
-    if (!loadable) {
-      loadable = createLoadable(input);
-    }
-    loadable.onChange(fireStateChange);
-    return loadable;
-  }
-
-  function valueOf(input, defaultValue) {
-    const loadable = loadableOf(input);
-    if (loadable.state === "loading") {
-      if (arguments.length > 1) return defaultValue;
-      throw loadable.promise;
-    }
-    if (loadable.state === "hasError") throw loadable.error;
-    return loadable.value;
-  }
-
-  return () => {
-    store.valueOf = valueOf;
-    store.loadableOf = loadableOf;
-    try {
-      return selector(store);
-    } finally {
-      // rollback extensions
-      delete store.valueOf;
-      delete store.loadableOf;
-    }
+  const context = {
+    value: getValue,
+    loadable: getLoadable,
   };
+
+  function getLoadable(value) {
+    if (value && value.type === atomType) {
+      value = value.promise;
+    }
+    if (isPromiseLike(value)) {
+      const loadable = createLoadable(value);
+      if (!handledLoadables.has(value)) {
+        handledLoadables.add(value);
+        loadableListeners.push(
+          loadable.onDone(() => {
+            data.handleChange();
+          })
+        );
+      }
+      return loadable;
+    }
+    return {
+      state: "hasValue",
+      value,
+    };
+  }
+
+  function getValue(value, defaultValue) {
+    if (value && value.type === atomType) {
+      if (value.state === "hasValue") return value.value;
+      value = value.promise;
+    }
+
+    if (isPromiseLike(value)) {
+      const loadable = getLoadable(value);
+      if (arguments.length > 1) return loadable.tryGetValue(defaultValue);
+      if (loadable.state === "loading") {
+        throw loadable.promise;
+      }
+      if (loadable.state === "hasError") {
+        throw loadable.error;
+      }
+      return loadable.value;
+    }
+    return value;
+  }
+
+  return (data.selectorWrapper = function () {
+    // remove previous loadable listeners
+    loadableListeners.forEach((x) => x());
+    handledLoadables.clear();
+    return selector(data.store, context);
+  });
 }

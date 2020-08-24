@@ -90,78 +90,56 @@ function App() {
 
 ## Advanced Usages
 
-### Using store context
+### Using action context
 
-You can call storeact() to retrieve store context
+When an action is dispatching, storeact creates a task for each action call then pass that task as second argument of action.
+Using action task to control execution flow more easily.
 
-```jsx harmony
-const context = storeact();
-```
-
-Store context contains many utilities (async, cache...). You can use object destructing to simplify code
-
-```jsx harmony
-const { async, cache } = storeact();
-```
-
-### Delay execution using async.delay(ms)
+### Delay execution using task.delay(ms)
 
 ```jsx harmony
 const Store = () => {
-  const { async } = storeact();
-  let count = storeact();
+  let count = 0;
 
   return {
     increase() {
       count++;
     },
-    async increaseAsync() {
-      await async.delay(1000);
+    async increaseAsync(payload, task) {
+      await task.delay(1000);
       this.increase();
     },
   };
 };
 ```
 
-## Using async.cancellable(...cancelActions)
+## Using task.cancelOn(...cancelActions)
 
 ```jsx harmony
 const Store = () => {
-  const { async } = storeact();
-
   return {
     cancel() {},
-    async search() {
-      // cancellable object will be cancelled if this.search or this.cancel are dispatched
-      // that means search() call is always last one
-      const cancellable = async.cancellable(this.search, this.cancel);
-      await async.delay(3000);
-      if (cancellable.cancelled) return;
+    async search(payload, task) {
+      task.cancelOn(this.cancel);
+      await task.delay(3000);
+      if (task.cancelled()) return;
       // update state logic here
     },
   };
 };
 ```
 
-## Using async.debounce(ms, ...cancelActions)
+## Using task.debounce(ms)
 
 You can use debounce to wait certain amount of time before next execution block
 
 ```jsx harmony
 const Store = () => {
-  const { async } = storeact();
-
   return {
     cancel() {},
-    async search() {
-      // A resolved value is true if it passed 500ms or search(), cancel() dispatched
-      const debounceCancelled = await async.debounce(
-        500,
-        this.search,
-        this.cancel
-      );
-      if (debounceCancelled) return;
-      // you can combine cancellable latest logic (example above) here
+    async search(payload, task) {
+      await task.debounce(500);
+      // update state logic here
     },
   };
 };
@@ -171,18 +149,16 @@ const Store = () => {
 
 ```jsx harmony
 const Store = () => {
-  const { async } = storeact();
-
   return {
     async startDataFetching() {
-      await fetch("");
-      this.dataFetched();
+      const data = await fetch("api");
+      this.dataFetched(data);
     },
     dataFetched() {},
-    async search() {
+    async search(payload, task) {
       this.startDataFetching();
       // wait until dataFetched action dispatched
-      await async.race(this.dataFetched);
+      const data = await task.when(this.dataFetched);
       // do something
     },
   };
@@ -193,25 +169,20 @@ You can improve above example with cancellable searching logic
 
 ```jsx harmony
 const Store = () => {
-  const { async } = storeact();
-
   return {
-    cancel() {},
     async startDataFetching() {
-      await fetch("");
-      this.dataFetched();
+      const data = await fetch("api");
+      this.dataFetched(data);
     },
     dataFetched() {},
-    async search() {
-      this.startDataFetching();
+    cancel() {},
+    async search(term, task) {
+      // search progress will be cancelled if cancel action dispatched
+      task.cancelOn(this.cancel);
+      await task.debounce(500);
+      this.startDataFetching(term);
       // wait until dataFetched action dispatched
-      const { cancelled } = await async.race({
-        cancelled: this.cancel,
-        done: this.dataFetched,
-      });
-      // if cancel action dispatched before dataFetched
-      if (cancelled) return;
-
+      const data = await task.when(this.dataFetched);
       // do something
     },
   };
@@ -220,18 +191,17 @@ const Store = () => {
 
 ### Handling async data loading
 
-You can use async.value() to handle async data loading easily
+You can use AsyncValue to handle async data loading easily
 
 ```jsx harmony
-const TodoStore = () => {
-  const { async } = storeact();
+const TodoStore = ({ async }) => {
   // create async value object with empty array as default value
-  const list = async.value([]);
+  const list = async([]);
 
   return {
-    init() {
+    init(task) {
       // start data loading
-      list.load(fetch("todo-api"));
+      task.mutate(list, fetch("todo-api"));
     },
     state() {
       // return todos state is promise
@@ -241,12 +211,12 @@ const TodoStore = () => {
 };
 ```
 
-In React component, to retrieve promised value we use store.valueOf()
+In React component, to retrieve promised value we use selector util
 
 ```jsx harmony
 const TodoCount = () => {
-  const count = storeact(TodoStore, (store) => {
-    return store.valueOf(store.state.todos).length;
+  const count = storeact(TodoStore, (store, util) => {
+    return util.value(store.state.todos).length;
   });
   return <h1>Todos ({count})</h1>;
 };
@@ -262,14 +232,14 @@ const App = () => {
 
 A "Loading..." message will show if todos promise still not fulfilled
 
-**loadableOf**
+**util.loadable()**
 
-Using loadableOf() to retrieve Loadable object to render loading progress manually
+Using util.loadable() to retrieve Loadable object to render loading progress manually
 
 ```jsx harmony
 const TodoCount = () => {
-  const loadable = storeact(TodoStore, (store) => {
-    return store.loadableOf(store.state.todos);
+  const loadable = storeact(TodoStore, (store, util) => {
+    return util.loadable(store.state.todos);
   });
   if (loadable.state === "loading") return <div>Loading...</div>;
   if (loadable.state === "hasError")
@@ -280,3 +250,6 @@ const TodoCount = () => {
 ```
 
 ## Real World Examples
+
+1. [Shopping cart](https://codesandbox.io/s/storeact-v2-shopping-cart-sr5zj?file=/src/stores/CartStore.js)
+1. [Shopping cart with code splitting for store](https://codesandbox.io/s/storeact-v2-shopping-cart-with-code-splitting-60mrj?file=/src/stores/CartStore/index.js)

@@ -50,12 +50,8 @@ export default function createArrayKeyedMap() {
     clear() {
       root.clear();
     },
-    delete(key, onDelete) {
-      const map = getMap(key, false);
-      if (map.value !== unset && onDelete) {
-        onDelete(map.value);
-      }
-      map.value = unset;
+    delete(key) {
+      getMap(key, false).value = unset;
     },
     *values() {
       for (const map of values) {

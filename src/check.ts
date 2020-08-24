@@ -1,116 +1,42 @@
-import storeact, { Flow } from "./index";
+import storeact, { StoreContext, Task } from "./index";
 
-function StoreHook() {
-  return {
-    state() {
-      return { p1: 1, pr2: 2 };
-    },
-    otherMethods() {},
-  };
-}
+const CounterStore = (context: StoreContext) => {
+  let count = 0;
 
-function Store() {
-  const { async } = storeact();
-  const { state: hookState, ...hookActions } = StoreHook();
-  let results: Promise<number>;
-  const value = async.value(true);
+  console.log(
+    context.atom(100).value,
+    context.cache((a: number) => 100)(1),
+    context.task.when("aa")
+  );
 
   const that = {
-    flow(): Flow {
-      return {
-        $options: {
-          debounce: {
-            search1: 1,
-          },
-        },
-        $cancel: "cancel",
-        search: {
-          $block: true,
-        },
-      };
-    },
-    init() {},
     state() {
-      return {
-        results,
-        value,
-        ...hookState(),
-      };
+      return count;
     },
-    ...hookActions,
-    async search(term: string) {
-      const success = await async.debounce(0, that.search, that.cancel);
-      if (!success) return;
-      const searchCT = async.cancellable(that.search, that.cancel);
-      results = searchCT.wrap(that.fetch(term));
+    increase(payload: number) {
+      return true;
     },
-    cancel() {},
-    fetch(term: string) {
-      return Promise.resolve(1100);
+    someData: true,
+    async increaseAsync(payload: number, task: Task) {
+      const result = await task.when(that.increase);
+      console.log(result);
+      return 1000;
     },
   };
 
   return that;
-}
+};
 
-const store = storeact(Store);
-
-const result = storeact(Store, ({ valueOf, loadableOf, state }) => ({
-  results: valueOf(state.results),
-  loadable: loadableOf(state.results),
-  otherValue: valueOf(state.value),
+const store = storeact(CounterStore);
+const result = storeact(CounterStore, (store, util) => ({
+  increase: store.increase,
+  count: util.loadable(store.state),
 }));
 
-console.log(store.cancel(), result.results, result.loadable);
-
-const useCounter = () => {
-  let count = 0;
-  return {
-    state() {
-      return count;
-    },
-    increase() {
-      count++;
-    },
-    decrease() {
-      count--;
-    },
-  };
-};
-
-const ParentStore = () => {
-  const { state: counterState, ...counterProps } = useCounter();
-
-  return {
-    state() {
-      return {
-        parent: true,
-        count: counterState(),
-      };
-    },
-    ...counterProps,
-  };
-};
-
-const ChildStore = () => {
-  const parentStore = storeact(ParentStore);
-
-  return {
-    state() {
-      return {
-        ...parentStore.state,
-        child: true,
-      };
-    },
-    increase() {
-      parentStore.increase();
-    },
-    decrease() {
-      parentStore.decrease();
-    },
-    parentIncrease: parentStore.increase,
-  };
-};
-
-const child = storeact(ChildStore);
-console.log(child.state);
+console.log(
+  store.increase(),
+  store.state,
+  result.increase,
+  result.count,
+  store.someData
+);

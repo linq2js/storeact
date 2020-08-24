@@ -1,236 +1,150 @@
-declare const storeact: DefaultExports;
+declare const storeact: StoreactExports;
+
 export default storeact;
 
-export interface Context {
-  async: AsyncModuleExports;
-  cache: CacheModuleExports;
-  lock: LockExports;
-  forceUpdate();
-  forceUpdate(...functions: Function[]): void;
-}
-
-export interface Cancellable {
-  readonly cancelled: boolean;
-  onCancel(listener: GenericListener<Cancellable>): RemoveListener;
-  cancel(): void;
-  wrap<T extends (...args: any[]) => any>(obj: T): CancellableWrappedInfer<T>;
-  wrap<T extends Promise<any>>(
-    obj: T,
-    onResolve: Function
-  ): CancellableWrappedInfer<T>;
-  wrap<T extends Promise<any>>(
-    obj: T,
-    options?: WrapOptions
-  ): CancellableWrappedInfer<T>;
-  call<T extends Function>(func: T, ...args: any[]): void;
-}
-
-export type Flow<T extends ChildFlows = ChildFlows> =
-  | FlowProps<T>
-  | Omit<T, "$id" | "$options" | "$block">;
-
-interface DefaultExports {
-  /**
-   * Retrieve current store context
-   */
-  (): Context;
-  /**
-   * Retrieve store instance from sepcific definition.
-   * This is React hook if you call it inside component rendering phase
-   */
-  <TDefinition extends (...args: any[]) => any>(
-    definition: TDefinition
-  ): StoreInfer<ReturnType<TDefinition>>;
-  /**
-   * Retrieve store's selected value.
-   * This is react hook so it must be called inside component rendering phase
-   */
-  <TDefinition extends (...args: any[]) => any, TResult>(
-    definition: TDefinition,
-    selector: (store: StoreForSelectorInfer<ReturnType<TDefinition>>) => TResult
+export interface StoreactExports extends Function {
+  <T>(definition: T): StoreInfer<T>;
+  <T, TResult>(
+    definition: T,
+    selector: (store?: StoreInfer<T>, util?: SelectorUtil) => TResult
   ): TResult;
+
+  module(name: string, factory: Function): RemoveModule;
 }
 
-interface Store<TState = any> {
-  state: TState;
-  onChange(listener: GenericListener<this>): RemoveListener;
-  onDispatch(
-    action: ActionName | Action,
-    listener: DispatchListener
-  ): RemoveListener;
-  onDispatch(listener: DispatchListener): RemoveListener;
+export interface StoreContext {
+  task: TaskModule;
+  atom: AtomModule;
+  cache: CacheModule;
 }
 
-interface StoreForSelector<T> extends Store<T> {
-  valueOf<T>(value: PromiseValue<T> | AsyncValue<T>): T;
-  valueOf<T>(value: PromiseValue<T> | AsyncValue<T>, defaultValue: T): T;
-  loadableOf<T>(value: PromiseValue<T> | AsyncValue<T>): Loadable<T>;
+export interface Store<T> {
+  state: T;
+  subscribe(subscription: DispatchSubscription): Unsubscribe;
 }
 
-interface Loadable<T> {
-  readonly state: "loading" | "hasValue" | "hasError";
+export interface SelectorUtil {
+  value<T>(value: Promise<T> | T, defaultValue: T): T;
+  loadable<T>(value: Promise<T> | T): Loadable<T>;
+}
+
+export interface Loadable<T> {
   readonly value: T;
   readonly error: any;
+  readonly state: LoadableState;
 }
 
-interface CacheModuleExports {
-  family(): FamilyInfer<() => { [key: string]: any }>;
-  family<Factory>(member: Factory): FamilyInfer<Factory>;
-}
-
-interface AsyncModuleExports {
-  race<TAwaitableMap extends { [key: string]: Awaitable | AwaitableList }>(
-    awaitable: TAwaitableMap
-  ): Task<
-    {
-      [key in keyof TAwaitableMap]: {
-        type: TAwaitableMap[key];
-        payload: TaskResultInfer<TAwaitableMap[key]>;
-      };
-    }
+export interface Task {
+  on(actions: string, listener: DispatchListener): Unsubscribe;
+  once(actions: string, listener: DispatchListener): Unsubscribe;
+  delay(ms?: number): Promise<void>;
+  debounce(ms?: number, ...cancelOn: Awaitable[]): Promise<void | never>;
+  when<T>(awaitable: Promise<T>, options?: WhenOptions<T>): Promise<T>;
+  when<T>(
+    awaitable: string | ((payload: T, ...args: any[]) => any),
+    options?: WhenOptions<any>
+  ): Promise<T>;
+  when(awaitables: Awaitable[], options?: WhenOptions<any>): Promise<any[]>;
+  when<T extends { [key: string]: Awaitable }>(
+    awaitables: T,
+    options?: WhenOptions<any>
+  ): Promise<
+    { [key in keyof T]: { payload: PayloadInfer<T[key]>; type: T[key] } }
   >;
-  race(awaitable: Awaitable): Task<TaskResultInfer<Awaitable>>;
-  race(...awaitables: Awaitable[]): Task<any>;
-  delay<T = undefined>(ms?: number, value?: T): Promise<T>;
-  debounce(
-    ms: number,
-    ...cancelActions: Awaitable[]
-  ): CancellablePromise<boolean>;
-  cancellable(...cancelActions: Awaitable[]): Cancellable;
-  forever<T = any>(): Promise<T>;
-  value<T = any>(value?: T): AsyncValue<T>;
+  cancelOn(...awaitables: Awaitable[]): void;
+  latest(): void;
+  mutate<T>(fn: () => T): T;
+  mutate<T>(atom: Atom<T>, value: T | ((prev: T) => T)): Promise<T>;
+  mutate<T, U>(
+    atom: Atom<T>,
+    value: Promise<U> | ((prev: T) => Promise<U>),
+    normalizer: (result: U, value: T) => T
+  ): Promise<T>;
+
+  call(fn: Function): Task;
+  cancel(): void;
+  cancelled(): boolean;
+  lock<T>(fn: () => T): T;
 }
 
-interface AsyncValue<T> {
+export interface WhenOptions<T> {
+  onSuccess?(listener: GenericListener<T>): any;
+  onError?(listener: GenericListener<any>): any;
+  onDone?(listener: GenericListener<void>): any;
+}
+
+export interface Atom<T> {
   value: T;
-  readonly loading: boolean;
-  readonly dirty: boolean;
-  readonly promise: Promise<T>;
+  readonly state: LoadableState;
   readonly error: any;
+  readonly ready: Promise<T>;
+  onReady(listener: GenericListener<Atom<T>>): Unsubscribe;
+  onChange(listener: GenericListener<Atom<T>>): Unsubscribe;
   cancel(): void;
-  update(reducer: (prev: T) => T): AsyncValue<T>;
-  load(
-    value: Promise<T> | false | null | undefined,
-    cancellable?: Cancellable
-  ): AsyncValue<T>;
-  reset(): AsyncValue<T>;
-  onChange(listener: GenericListener<AsyncValue<T>>): RemoveListener;
-  onReady(listener: GenericListener<AsyncValue<T>>): RemoveListener;
-
-  /**
-   * Enable auto update mode. In this mode, the store will update whenever AsyncValue updated
-   */
-  autoUpdate(): AsyncValue<T>;
-}
-/**
- * lock one or multiple actions and auto unlock until specified events triggered (action dispatched, promise resolved, AsyncValue is ready)
- */
-interface LockExports extends Function {
-  (action: Action | Function, ...unlockEvents: Awaitable[]): Unlock;
-  (actions: (Action | Function)[], ...unlockEvents: Awaitable[]): Unlock;
+  reset(): void;
+  map<U>(mapper: (value: T) => U): Atom<U>;
 }
 
-interface Task<TResult = any> extends Promise<TResult> {
-  readonly done: boolean;
-  readonly success: boolean;
-  readonly fail: boolean;
-  readonly result: TResult;
-  readonly error: any;
-  run(func: (task?: Task<TResult>) => any): void;
+export interface CacheModule extends Function {
+  <T extends (...args: any[]) => any>(memberFactory: T): T &
+    CacheFamily & { delete(...args: Parameters<T>): void };
 }
 
-interface CancellablePromise<T = any> extends Promise<T> {
-  cancel(): void;
+export interface TaskModule
+  extends Function,
+    Pick<Task, "on" | "once" | "delay" | "debounce" | "when"> {
+  (options?: TaskOptions): Task;
 }
 
-interface WrapOptions {
-  onResolve?: Function;
-  onReject?: Function;
-  onDone?: Function;
-  onCancel?: Function;
+export interface AtomModule extends Function {
+  <T>(defaultValue?: T): Atom<T>;
 }
 
-interface ChildFlows {
-  [key: string]: Flow;
+export interface CacheFamily {
+  clear(): void;
 }
 
-interface FlowProps<T> {
-  $id?: string;
-  $block?: boolean;
-  $success?: FlowResolver;
-  $error?: FlowResolver;
-  $done?: FlowResolver;
-  $fork?: boolean;
-  $options?: FlowOptions<T>;
+export interface TaskOptions {
+  onCancel?(listener: GenericListener<Task>): any;
+  cancelOn?: Awaitable | Awaitable[];
 }
 
-interface FlowOptions<T> {
-  debounce?: { [key in keyof T]: number };
-}
+type LoadableState = "loading" | "hasValue" | "hasError";
 
-interface FlowArgs {
-  id: string;
-  name: string;
-}
+type Awaitable = string | Function | Promise<any>;
 
-type FlowResolver = string | ((...args) => string);
-type FlowId = RootFlowId | string;
-type RootFlowId = "#";
+type PayloadInfer<T> = T extends Promise<infer TResolved> ? TResolved : any;
 
-type FamilyInfer<TFactory> = TFactory extends (...args: any) => any
-  ? TFactory & {
-      clear(): void;
-      delete(...args: Parameters<TFactory>): void;
-    }
+type StoreInfer<T> = T extends (context?: StoreContext) => infer TProps
+  ? Store<StoreStateInfer<TProps>> &
+      Omit<StoreMethodsInfer<TProps>, "state" | "init">
   : never;
 
-type CancellableWrappable = Function | Promise<any>;
-
-type CancellableWrappedInfer<T> = T extends Promise<infer TResolved>
-  ? CancellablePromise<TResolved>
-  : T extends Function
-  ? T
-  : T extends { [key in keyof T]: CancellableWrappable }
-  ? { [key in keyof T]: CancellableWrappedInfer<T[key]> }
-  : T extends CancellableWrappable[]
-  ? CancellableWrappedInfer<T[number]>[]
-  : never;
-
-type StoreInfer<TDefinition> = StoreActionListInfer<TDefinition> &
-  Store<StoreStateInfer<TDefinition>>;
-
-type StoreForSelectorInfer<TDefinition> = StoreActionListInfer<TDefinition> &
-  StoreForSelector<StoreStateInfer<TDefinition>>;
-
-type StoreActionListInfer<TDefinition> = Omit<
-  {
-    [key in keyof TDefinition]: StoreActionInfer<TDefinition[key]>;
-  },
-  "init" | "flow"
->;
-
-type StoreStateInfer<TDefinition> = TDefinition extends {
-  state(): infer TState;
-}
+type StoreStateInfer<T> = T extends { state(): infer TState }
+  ? TState
+  : T extends { state: infer TState }
   ? TState
   : any;
 
-type StoreActionInfer<TAction> = TAction extends (...args: any[]) => any
-  ? TAction
-  : never;
-type ActionName = string;
-type PromiseValue<T = any> = Promise<T>;
-type Action<T = any> = (payload?: T, ...args: any[]) => any;
-type Awaitable = ActionName | PromiseValue | Action | AsyncValue<any>;
-type AwaitableList = Awaitable[];
-type TaskResultInfer<TAwaitable> = TAwaitable extends PromiseValue<
-  infer TResolved
->
-  ? TResolved
-  : TAwaitable extends Action<infer TPayload>
-  ? TPayload
-  : any;
-type RemoveListener = () => void;
-type DispatchListener = GenericListener<{ action: Function; payload: any }>;
-type GenericListener<T> = (args?: T) => any;
-type Unlock = () => void;
+type StoreMethodsInfer<T> = { [key in keyof T]: StoreMethodInfer<T[key]> };
+
+type StoreMethodInfer<T> = T extends (
+  payload: infer TPayload,
+  task?: any
+) => infer TResult
+  ? (payload?: TPayload) => TResult
+  : T;
+
+type Unsubscribe = () => void;
+
+type DispatchSubscription = GenericListener<{
+  store: Store<any>;
+  action: string;
+  payload: any;
+}>;
+
+type DispatchListener = GenericListener<{ action: string; payload: any }>;
+
+type GenericListener<T> = (args: T) => any;
+
+type RemoveModule = () => void;
