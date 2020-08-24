@@ -38,6 +38,15 @@ export default function createAtom(
         emitter.once("ready", () => resolve(currentValue))
       );
     },
+    get hasError() {
+      return currentState === "hasError";
+    },
+    get hasValue() {
+      return currentState === "hasValue";
+    },
+    get loading() {
+      return currentState === "loading";
+    },
     set value(value) {
       if (currentValue === value) return;
 
@@ -114,6 +123,15 @@ function createMappedAtom(source, mapper) {
     onChange: (listener) => source.onChange(() => listener(atom)),
     onReady: (listener) => source.onReady(() => listener(atom)),
     onUpdate: (listener) => source.onUpdate(() => listener(atom)),
+    get hasError() {
+      return source.hasError;
+    },
+    get hasValue() {
+      return source.hasValue;
+    },
+    get loading() {
+      return source.loading;
+    },
     get state() {
       return source.state;
     },

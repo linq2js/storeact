@@ -19,7 +19,19 @@ export interface StoreContext {
 }
 
 export interface Store<T> {
-  state: T;
+  readonly state: T;
+  /**
+   * indicate that store initialization is completed or not
+   */
+  readonly loading: boolean;
+  /**
+   * indicate that store's actions are dispatching
+   */
+  readonly busy: boolean;
+  // /**
+  //  * get last error
+  //  */
+  // readonly error: any;
   subscribe(subscription: DispatchSubscription): Unsubscribe;
 }
 
@@ -78,6 +90,9 @@ export interface Atom<T> {
   readonly state: LoadableState;
   readonly error: any;
   readonly ready: Promise<T>;
+  readonly hasError: boolean;
+  readonly hasValue: boolean;
+  readonly loading: boolean;
   onReady(listener: GenericListener<Atom<T>>): Unsubscribe;
   onChange(listener: GenericListener<Atom<T>>): Unsubscribe;
   cancel(): void;
@@ -126,7 +141,9 @@ type StoreStateInfer<T> = T extends { state(): infer TState }
   ? TState
   : any;
 
-type StoreMethodsInfer<T> = { [key in keyof T]: StoreMethodInfer<T[key]> };
+type StoreMethodsInfer<T> = {
+  [key in keyof T]: StoreMethodInfer<T[key]> & { readonly running: boolean };
+};
 
 type StoreMethodInfer<T> = T extends (
   payload: infer TPayload,

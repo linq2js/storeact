@@ -12,7 +12,11 @@ add("task", taskModule);
 add("cache", cacheModule);
 add("atom", atomModule);
 
-export let currentContext;
+let currentContext;
+
+export function getStoreContext() {
+  return currentContext;
+}
 
 export default function createStore(definition, options) {
   const emitter = createEmitter();
@@ -36,6 +40,10 @@ export default function createStore(definition, options) {
   let prevState = unset;
   let vars = {};
   let instance;
+  let error;
+  let shouldUpdateAfterInit = false;
+  let runningActions = 0;
+  let loading = false;
 
   try {
     currentContext = context;
@@ -44,8 +52,13 @@ export default function createStore(definition, options) {
     currentContext = undefined;
   }
   let state = instance.state || noop;
-  const handleDispatch = instance.handleDispatch || noop;
-  const handleChange = instance.handleChange;
+
+  if (typeof instance.handleChange === "function") {
+    emitter.on("change", instance.handleChange);
+  }
+  if (typeof instance.handleDispatch === "function") {
+    emitter.on("dispatch", instance.handleDispatch);
+  }
   // remove special methods to prevent direct calls from outside store
   delete instance.state;
   delete instance.handleDispatch;
@@ -75,13 +88,25 @@ export default function createStore(definition, options) {
     get state() {
       return getState();
     },
+    get busy() {
+      shouldUpdateAfterInit = true;
+      return !!runningActions;
+    },
+    get loading() {
+      shouldUpdateAfterInit = true;
+      return loading;
+    },
+    get error() {
+      shouldUpdateAfterInit = false;
+      return error;
+    },
     subscribe: emitter.get("update").on,
     onChange,
   };
   let updateCount = 0;
 
   function detectChange() {
-    if (!handleChange || !emitter.has("change")) return;
+    if (!emitter.has("change")) return;
     const nextState = getState();
     if (prevState === unset) {
       prevState = nextState;
@@ -90,9 +115,7 @@ export default function createStore(definition, options) {
     if (isEqual(prevState, nextState)) {
       return;
     }
-    const args = { store, prevState };
-    handleChange && handleChange.call(instance, args);
-    emitter.emit("change", { store, prevState });
+    emitter.emit("change", { store, state: nextState, prevState });
   }
 
   function getState() {
@@ -109,22 +132,29 @@ export default function createStore(definition, options) {
   function dispatch(action, payload) {
     const args = { action, payload, store };
     emitter.emit("dispatch", args);
-    action !== "init" && handleDispatch(args);
   }
 
-  function update(func) {
+  function update(func, onFinally) {
     cachedState = unset;
+    let isAsync = false;
     try {
       updateCount++;
       if (typeof func === "function") {
         const result = func();
         if (isPromiseLike(result)) {
-          return result.then(updateWithDebounce);
+          isAsync = true;
+          return result.finally(() => {
+            onFinally && onFinally();
+            updateWithDebounce();
+          });
         }
         return result;
       }
     } finally {
       updateCount--;
+      if (!isAsync && onFinally) {
+        onFinally();
+      }
       if (!updateCount) {
         currentState = unset;
         detectChange();
@@ -152,41 +182,66 @@ export default function createStore(definition, options) {
     }
 
     let task;
-
+    let runningInstances = 0;
     const wrappedAction = (payload, parentTask) => {
       if (task) {
         const lock = task.lock();
         if (lock !== unset) return lock;
       }
 
-      return update(() => {
-        task = createTask({
-          prevTask: task,
-          parentTask,
-          subscribe,
-          update,
-        });
-        try {
-          const args =
-            payload === unset ? [task, instance] : [payload, task, instance];
-          const result = invoke.apply(instance, args);
-          if (typeof result === "function") {
-            return result(instance);
+      return update(
+        () => {
+          runningInstances++;
+          runningActions++;
+          task = createTask({
+            prevTask: task,
+            parentTask,
+            subscribe,
+            update,
+          });
+          try {
+            task.onCancel(() => {
+              runningInstances--;
+              runningActions--;
+            });
+            const args =
+              payload === unset ? [task, instance] : [payload, task, instance];
+            const result = invoke.apply(instance, args);
+            if (typeof result === "function") {
+              return result(instance);
+            }
+            return result;
+          } finally {
+            dispatch(propName, payload);
           }
-          return result;
-        } finally {
-          dispatch(propName, payload);
+        },
+        () => {
+          if (task.cancelled()) return;
+          runningInstances--;
+          runningActions--;
         }
-      });
+      );
     };
     wrappedAction.type = actionType;
     wrappedAction.displayName = propName;
+    Object.defineProperty(wrappedAction, "running", {
+      get() {
+        return !!runningInstances;
+      },
+    });
     store[propName] = isPrivate ? accessDenied : wrappedAction;
     instance[propName] = wrappedAction;
   });
 
   if (store.init) {
-    store.init(unset);
+    const initResult = store.init(unset);
+    if (isPromiseLike(initResult)) {
+      loading = true;
+      initResult.finally(() => {
+        loading = false;
+        shouldUpdateAfterInit && update();
+      });
+    }
     delete store.init;
   }
 

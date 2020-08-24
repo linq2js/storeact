@@ -250,6 +250,6 @@ const TodoCount = () => {
 ```
 
 ## Real World Examples
-
+1. [Counter](https://codesandbox.io/s/storeact-v2-cancellable-counter-y1qo8?file=/src/CounterStore.js)
 1. [Shopping cart](https://codesandbox.io/s/storeact-v2-shopping-cart-sr5zj?file=/src/stores/CartStore.js)
 1. [Shopping cart with code splitting for store](https://codesandbox.io/s/storeact-v2-shopping-cart-with-code-splitting-60mrj?file=/src/stores/CartStore/index.js)

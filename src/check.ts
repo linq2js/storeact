@@ -35,6 +35,7 @@ const result = storeact(CounterStore, (store, util) => ({
 
 console.log(
   store.increase(),
+  store.increase.running,
   store.state,
   result.increase,
   result.count,
