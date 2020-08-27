@@ -1,5 +1,8 @@
 import storeact from "../index";
 
+const delay = (ms = 0, value) =>
+  new Promise((resolve) => setTimeout(resolve, ms, value));
+
 test("should get store context properly", () => {
   const store = storeact((context1) => {
     const context2 = storeact();
@@ -41,4 +44,30 @@ test("dynamic prop", () => {
   // ignore first value
   expect(store.data).toBe(2);
   expect(store.data).toBe(3);
+});
+
+test("should prevent action dispatching if store is initializing", async () => {
+  const store = storeact(() => {
+    let count = 0;
+    return {
+      state: () => count,
+      async init({ delay }) {
+        await delay(10);
+      },
+      increase() {
+        count++;
+      },
+    };
+  });
+
+  store.increase();
+  store.increase();
+  store.increase();
+
+  expect(store.state).toBe(0);
+
+  await delay(15);
+  expect(store.state).toBe(0);
+  store.increase();
+  expect(store.state).toBe(1);
 });

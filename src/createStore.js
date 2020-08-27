@@ -1,9 +1,16 @@
+import createSelector from "./createSelector";
 import isEqual from "./isEqual";
 import { add, all, use } from "./module";
 import taskModule from "./taskModule";
 import isPromiseLike from "./isPromiseLike";
 import createEmitter from "./createEmitter";
-import { noop, unset, actionType } from "./types";
+import {
+  noop,
+  unset,
+  actionType,
+  storeMetadataProps,
+  storeType,
+} from "./types";
 import createTask from "./createTask";
 import cacheModule from "./cacheModule";
 import atomModule from "./atomModule";
@@ -34,6 +41,7 @@ export default function createStore(definition, options) {
   moduleEntries.forEach(([key, module]) => {
     context[key] = use(module, moduleContext);
   });
+
   let cachedState = unset;
   let lastUpdater;
   let currentState = unset;
@@ -44,6 +52,7 @@ export default function createStore(definition, options) {
   let shouldUpdateAfterInit = false;
   let runningActions = 0;
   let loading = false;
+  const stateSnapshots = {};
 
   try {
     currentContext = context;
@@ -52,7 +61,7 @@ export default function createStore(definition, options) {
     currentContext = undefined;
   }
   let state = instance.state || noop;
-
+  let selectors = instance.selectors;
   if (typeof instance.handleChange === "function") {
     emitter.on("change", instance.handleChange);
   }
@@ -60,10 +69,20 @@ export default function createStore(definition, options) {
     emitter.on("dispatch", instance.handleDispatch);
   }
   // remove special methods to prevent direct calls from outside store
+  delete instance.selectors;
   delete instance.state;
   delete instance.handleDispatch;
   delete instance.handleChange;
   const storePropNames = Object.keys(instance);
+  const selectorMap = {};
+
+  if (selectors) {
+    Object.entries(selectors).forEach(([name, definition]) => {
+      const selector = createSelector(definition, selectorMap);
+      selectorMap[name] = (...args) =>
+        args.length ? selector(...args) : selector(getState());
+    });
+  }
 
   if (typeof state !== "function") {
     vars = state;
@@ -85,6 +104,8 @@ export default function createStore(definition, options) {
   }
 
   const store = {
+    ...selectorMap,
+    type: storeType,
     get state() {
       return getState();
     },
@@ -102,8 +123,17 @@ export default function createStore(definition, options) {
     },
     subscribe: emitter.get("update").on,
     onChange,
+    [storeMetadataProps]: {
+      definition,
+      reset,
+    },
   };
   let updateCount = 0;
+
+  function reset() {
+    delete definition.__store;
+    emitter.emit("update", { store });
+  }
 
   function detectChange() {
     if (!emitter.has("change")) return;
@@ -112,7 +142,7 @@ export default function createStore(definition, options) {
       prevState = nextState;
       return;
     }
-    if (isEqual(prevState, nextState)) {
+    if (isEqual(prevState, nextState, stateSnapshots)) {
       return;
     }
     emitter.emit("change", { store, state: nextState, prevState });
@@ -183,7 +213,10 @@ export default function createStore(definition, options) {
 
     let task;
     let runningInstances = 0;
+    let actionEmitter = createEmitter();
     const wrappedAction = (payload, parentTask) => {
+      // do not allow dispatch action during store is loading
+      if (loading) return;
       if (task) {
         const lock = task.lock();
         if (lock !== unset) return lock;
@@ -213,6 +246,7 @@ export default function createStore(definition, options) {
             return result;
           } finally {
             dispatch(propName, payload);
+            actionEmitter.emit("dispatch", payload);
           }
         },
         () => {
@@ -224,6 +258,7 @@ export default function createStore(definition, options) {
     };
     wrappedAction.type = actionType;
     wrappedAction.displayName = propName;
+    wrappedAction.subscribe = actionEmitter.get("dispatch").on;
     Object.defineProperty(wrappedAction, "running", {
       get() {
         return !!runningInstances;

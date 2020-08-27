@@ -3,13 +3,19 @@ declare const storeact: StoreactExports;
 export default storeact;
 
 export interface StoreactExports extends Function {
-  <T>(definition: T): StoreInfer<T>;
+  <T>(definition: T, options?: any): StoreInfer<T>;
   <T, TResult>(
     definition: T,
     selector: (store?: StoreInfer<T>, util?: SelectorUtil) => TResult
   ): TResult;
 
+  <T, TResult>(
+    store: Store<T>,
+    selector: (store?: StoreInfer<T>, util?: SelectorUtil) => TResult
+  ): TResult;
+
   module(name: string, factory: Function): RemoveModule;
+  reset(storeDefinition: Function | Store<any>): void;
 }
 
 export interface StoreContext {
@@ -132,7 +138,8 @@ type PayloadInfer<T> = T extends Promise<infer TResolved> ? TResolved : any;
 
 type StoreInfer<T> = T extends (context?: StoreContext) => infer TProps
   ? Store<StoreStateInfer<TProps>> &
-      Omit<StoreMethodsInfer<TProps>, "state" | "init">
+      SelectorListInfer<TProps> &
+      Omit<StoreMethodsInfer<TProps>, "state" | "init" | "selectors">
   : never;
 
 type StoreStateInfer<T> = T extends { state(): infer TState }
@@ -140,6 +147,29 @@ type StoreStateInfer<T> = T extends { state(): infer TState }
   : T extends { state: infer TState }
   ? TState
   : any;
+
+type SelectorListInfer<TProps> = TProps extends { selectors: infer TSelectors }
+  ? {
+      [key in keyof TSelectors]: (
+        ...args
+      ) => SelectorPropTypeInfer<TSelectors[key]>;
+    }
+  : never;
+
+type SelectorPropTypeInfer<TProp> = TProp extends any[]
+  ? SelectorTypeInfer<TProp>
+  : SelectorReturnTypeInfer<TProp>;
+
+type Tail<T extends any[]> = T extends [infer THead, ...Array<infer TTail>]
+  ? TTail
+  : never;
+type Last<T extends any[]> = T[Exclude<keyof T, keyof Tail<T>>];
+
+type SelectorTypeInfer<T extends any[]> = SelectorReturnTypeInfer<Last<T>>;
+
+type SelectorReturnTypeInfer<T> = T extends (...args: any[]) => any
+  ? ReturnType<T>
+  : never;
 
 type StoreMethodsInfer<T> = {
   [key in keyof T]: StoreMethodInfer<T[key]> & { readonly running: boolean };

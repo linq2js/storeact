@@ -38,6 +38,11 @@ export default function createAtom(
         emitter.once("ready", () => resolve(currentValue))
       );
     },
+    get changed() {
+      return new Promise((resolve) =>
+        emitter.once("change", () => resolve(currentValue))
+      );
+    },
     get hasError() {
       return currentState === "hasError";
     },
@@ -147,6 +152,9 @@ function createMappedAtom(source, mapper) {
       return new Promise((resolve) =>
         source.onReady(() => resolve(atom.value))
       );
+    },
+    get changed() {
+      return source.changed.then(() => atom.value);
     },
     get promise() {
       if (!cachedPromise) {

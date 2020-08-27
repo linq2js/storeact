@@ -47,6 +47,7 @@ export default function createTask(options = {}) {
       const result = isAsyncRace ? {} : [];
       const actionMatchers = [];
       const removeCancelListener = emitter.once("cancel", dispose);
+      const observableSubscriptions = [];
       let doneCount = 0;
       let isDone = false;
       let removeActionDispatchingListener = noop;
@@ -54,12 +55,13 @@ export default function createTask(options = {}) {
       function dispose() {
         removeCancelListener();
         removeActionDispatchingListener();
+        observableSubscriptions.forEach((x) => x());
       }
 
       function handleDone(result, error, fallback) {
+        dispose();
         if (!fallback && cancelled()) return;
         isDone = true;
-        dispose();
         onDone && onDone();
         error ? reject(error) : resolve(result);
       }
@@ -99,10 +101,11 @@ export default function createTask(options = {}) {
       }
 
       input.forEach(([key, target]) => {
-        if (typeof target === "function" && target.type === actionType) {
-          target = target.displayName;
-        }
-        if (typeof target === "string") {
+        if (target && typeof target.subscribe === "function") {
+          observableSubscriptions.push(
+            target.subscribe((payload) => handleSuccess(key, target, payload))
+          );
+        } else if (typeof target === "string") {
           actionMatchers.push({
             key,
             match: createMatcher(target),
@@ -143,14 +146,25 @@ export default function createTask(options = {}) {
   }
 
   function on(action, listener) {
-    if (typeof action === "function" && action.type === actionType) {
-      action = action.displayName;
+    let subscribeObservable = subscribeSync;
+    let unsubscribe;
+    if (action && typeof action.subscribe === "function") {
+      unsubscribe = action.subscribe((payload) =>
+        listener({
+          action: action.displayName || action.name || action,
+          payload,
+        })
+      );
+    } else if (typeof action === "string") {
+      const matcher = createMatcher(action);
+      unsubscribe = subscribeObservable(({ action, payload }) => {
+        if (!matcher(action)) return;
+        listener({ action, payload });
+      });
+    } else {
+      throw new Error("Unsupported action type " + typeof action);
     }
-    const matcher = createMatcher(action);
-    const unsubscribe = subscribeSync(({ action, payload }) => {
-      if (!matcher(action)) return;
-      listener({ action, payload });
-    });
+
     const dispose = () => {
       removeCancelListener();
       unsubscribe();
@@ -160,20 +174,10 @@ export default function createTask(options = {}) {
   }
 
   function once(action, listener) {
-    if (typeof action === "function" && action.type === actionType) {
-      action = action.displayName;
-    }
-    const matcher = createMatcher(action);
-    const unsubscribe = subscribeSync(({ action, payload }) => {
-      if (!matcher(action)) return;
-      dispose();
-      listener({ action, payload });
+    const dispose = on(action, (args) => {
+      dispose && dispose();
+      return listener(args);
     });
-    const dispose = () => {
-      removeCancelListener();
-      unsubscribe();
-    };
-    const removeCancelListener = emitter.on("cancel", dispose);
     return dispose;
   }
 
@@ -188,6 +192,8 @@ export default function createTask(options = {}) {
       input[index] = value;
     });
     when(input, {
+      // we do not use promise that returned from when(),
+      // use onSuccess instead to avoid get delay when action dispatch
       onSuccess() {
         cancel();
       },

@@ -3,18 +3,30 @@ import initStore from "./initStore";
 import isEqual from "./isEqual";
 import isPromiseLike from "./isPromiseLike";
 import createLoadable from "./createLoadable";
-import { atomType } from "./types";
+import { atomType, storeType } from "./types";
 
 const defaultSelector = (store) => store;
 
 export default function useStore(definition, selector = defaultSelector) {
-  const store = initStore(definition);
+  const isStore = definition.type === storeType;
+  const store = isStore ? definition : initStore(definition);
   const data = useRef({}).current;
   data.store = store;
   data.rerender = useState(undefined)[1];
   if (!data.handleChange) {
+    data.stateSnapshots = {};
     data.handleChange = () => {
       if (data.unmount) return;
+      // store has been reset
+      if (!isStore && data.store !== definition.__store) {
+        // cleanup
+        delete data.stateSnapshots;
+        delete data.prevSelector;
+        delete data.handleChange;
+        delete data.selectorWrapper;
+        data.rerender({});
+        return;
+      }
       const hasError = data.error;
       delete data.error;
       try {
@@ -22,7 +34,7 @@ export default function useStore(definition, selector = defaultSelector) {
 
         if (hasError) {
           // should re-render if previous rendering has an error
-        } else if (isEqual(data.prev, next)) {
+        } else if (isEqual(data.prev, next, data.stateSnapshots)) {
           return;
         }
       } catch (e) {
@@ -36,6 +48,7 @@ export default function useStore(definition, selector = defaultSelector) {
   data.effect = () => {
     // do not handleChange if user selects store object
     if (data.prev === definition.__store) return;
+    data.handleChange();
     return store.subscribe(data.handleChange);
   };
   useEffect(() => () => void (data.unmount = true), [data]);

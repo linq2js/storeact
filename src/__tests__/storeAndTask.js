@@ -164,3 +164,25 @@ test("lock", async () => {
   await delay(15);
   expect(store.state.checkoutResult).toBe(1);
 });
+
+test("handle action dispatching of other store", () => {
+  const callback = jest.fn();
+  const store1 = storeact(() => {
+    return {
+      increase() {},
+    };
+  });
+  const store2 = storeact(() => {
+    return {
+      init({ on }) {
+        on(store1.increase, callback);
+      },
+    };
+  });
+
+  store1.increase();
+  store1.increase();
+  store1.increase();
+
+  expect(callback).toBeCalledTimes(3);
+});

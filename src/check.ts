@@ -10,6 +10,12 @@ const CounterStore = (context: StoreContext) => {
   );
 
   const that = {
+    selectors: {
+      getState(state: number) {
+        return state;
+      },
+      double: ["getState", (state: number) => state.toString()],
+    },
     state() {
       return count;
     },
@@ -34,6 +40,8 @@ const result = storeact(CounterStore, (store, util) => ({
 }));
 
 console.log(
+  store.getState(),
+  store.double(),
   store.increase(),
   store.increase.running,
   store.state,
